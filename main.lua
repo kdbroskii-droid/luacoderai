@@ -2,82 +2,187 @@ local LuaCoderAI = {}
 
 LuaCoderAI.Context = {
     Scripts = {},
-    Objects = {}
+    Objects = {},
+    Systems = {},
+    Values = {}
 }
 
 LuaCoderAI.Knowledge = {
-    Services = {
-        "Players",
-        "Workspace",
-        "ReplicatedStorage",
-        "ServerStorage",
-        "ServerScriptService",
-        "StarterGui",
-        "StarterPlayer",
-        "TweenService",
-        "RunService",
-        "UserInputService",
-        "CollectionService",
-        "PathfindingService",
-        "PhysicsService",
-        "HttpService",
-        "DataStoreService",
-        "MarketplaceService",
-        "Lighting",
-        "SoundService"
+    Actions = {
+        "create",
+        "find",
+        "set",
+        "change",
+        "increase",
+        "decrease",
+        "add",
+        "remove",
+        "enable",
+        "disable",
+        "test",
+        "move"
     },
 
-    Concepts = {
-        "instances",
-        "events",
-        "attributes",
-        "values",
-        "tables",
-        "functions",
-        "modules",
-        "remote events",
-        "remote functions",
-        "players",
-        "characters",
-        "humanoids",
-        "tools",
+    RobloxWords = {
+        "player",
+        "character",
+        "humanoid",
+        "workspace",
+        "folder",
+        "model",
+        "part",
+        "value",
+        "attribute",
+        "event",
+        "remote",
+        "script",
+        "module",
         "gui",
-        "animation",
-        "pathfinding",
-        "raycasting",
-        "projectiles",
+        "button",
+        "tool",
+        "npc",
+        "bot",
+        "round",
+        "team",
         "inventory",
         "currency",
-        "rounds",
-        "teams",
-        "npcs",
-        "bots",
-        "debugging",
-        "testing"
+        "money",
+        "cash",
+        "coins",
+        "health",
+        "speed",
+        "position",
+        "size"
     }
 }
+
+local function normalize(text)
+    text = string.lower(tostring(text or ""))
+    text = text:gsub("[%p]", " ")
+    text = text:gsub("%s+", " ")
+    return text:match("^%s*(.-)%s*$")
+end
+
+local function splitWords(text)
+    local result = {}
+
+    for word in string.gmatch(normalize(text), "%S+") do
+        table.insert(result, word)
+    end
+
+    return result
+end
+
+local function similarity(a, b)
+    a = normalize(a)
+    b = normalize(b)
+
+    if a == b then
+        return 100
+    end
+
+    if a == "" or b == "" then
+        return 0
+    end
+
+    if string.find(a, b, 1, true) then
+        return 90
+    end
+
+    if string.find(b, a, 1, true) then
+        return 90
+    end
+
+    local common = 0
+    local used = {}
+
+    for i = 1, #a do
+        local char = a:sub(i, i)
+
+        for j = 1, #b do
+            if not used[j] and char == b:sub(j, j) then
+                common = common + 1
+                used[j] = true
+                break
+            end
+        end
+    end
+
+    return math.floor(
+        (common / math.max(#a, #b)) * 100
+    )
+end
 
 function LuaCoderAI.ClearContext()
     LuaCoderAI.Context.Scripts = {}
     LuaCoderAI.Context.Objects = {}
+    LuaCoderAI.Context.Systems = {}
+    LuaCoderAI.Context.Values = {}
 end
 
 function LuaCoderAI.RegisterScript(data)
-    if type(data) == "table" then
-        table.insert(LuaCoderAI.Context.Scripts, data)
-        return true
+    if type(data) ~= "table" then
+        return false
     end
 
-    return false
+    table.insert(LuaCoderAI.Context.Scripts, {
+        Name = tostring(data.Name or ""),
+        Path = tostring(data.Path or ""),
+        ClassName = tostring(data.ClassName or ""),
+        Tags = data.Tags or {},
+        Keywords = data.Keywords or {},
+        Description = data.Description or "",
+        API = data.API or {}
+    })
+
+    return true
 end
 
 function LuaCoderAI.RegisterObject(data)
-    if type(data) == "table" then
-        table.insert(LuaCoderAI.Context.Objects, data)
-        return true
+    if type(data) ~= "table" then
+        return false
     end
 
-    return false
+    table.insert(LuaCoderAI.Context.Objects, {
+        Name = tostring(data.Name or ""),
+        Path = tostring(data.Path or ""),
+        ClassName = tostring(data.ClassName or ""),
+        Tags = data.Tags or {}
+    })
+
+    return true
+end
+
+function LuaCoderAI.RegisterSystem(data)
+    if type(data) ~= "table" then
+        return false
+    end
+
+    table.insert(LuaCoderAI.Context.Systems, {
+        Name = tostring(data.Name or ""),
+        Path = tostring(data.Path or ""),
+        Keywords = data.Keywords or {},
+        Description = tostring(data.Description or ""),
+        Values = data.Values or {},
+        Actions = data.Actions or {}
+    })
+
+    return true
+end
+
+function LuaCoderAI.RegisterValue(data)
+    if type(data) ~= "table" then
+        return false
+    end
+
+    table.insert(LuaCoderAI.Context.Values, {
+        Name = tostring(data.Name or ""),
+        Path = tostring(data.Path or ""),
+        Type = tostring(data.Type or ""),
+        Keywords = data.Keywords or {}
+    })
+
+    return true
 end
 
 function LuaCoderAI.ScanGame()
@@ -102,14 +207,15 @@ function LuaCoderAI.ScanGame()
             table.insert(scripts, {
                 Name = object.Name,
                 Path = object:GetFullName(),
-                ClassName = className
+                ClassName = className,
+                Tags = {}
             })
-
         else
             table.insert(objects, {
                 Name = object.Name,
                 Path = object:GetFullName(),
-                ClassName = className
+                ClassName = className,
+                Tags = {}
             })
         end
     end
@@ -117,1168 +223,249 @@ function LuaCoderAI.ScanGame()
     return scripts, objects
 end
 
+function LuaCoderAI.Search(query)
+    local results = {}
+    local words = splitWords(query)
+
+    local function scoreEntry(entry)
+        local score = 0
+
+        local searchable = {
+            entry.Name,
+            entry.Path,
+            entry.Description
+        }
+
+        for _, tag in ipairs(entry.Tags or {}) do
+            table.insert(searchable, tag)
+        end
+
+        for _, keyword in ipairs(entry.Keywords or {}) do
+            table.insert(searchable, keyword)
+        end
+
+        for _, word in ipairs(words) do
+            for _, text in ipairs(searchable) do
+                score = score + similarity(word, text)
+            end
+        end
+
+        return score
+    end
+
+    for _, entry in ipairs(LuaCoderAI.Context.Scripts) do
+        local score = scoreEntry(entry)
+
+        if score > 0 then
+            table.insert(results, {
+                Type = "Script",
+                Data = entry,
+                Score = score
+            })
+        end
+    end
+
+    for _, entry in ipairs(LuaCoderAI.Context.Systems) do
+        local score = scoreEntry(entry)
+
+        if score > 0 then
+            table.insert(results, {
+                Type = "System",
+                Data = entry,
+                Score = score
+            })
+        end
+    end
+
+    for _, entry in ipairs(LuaCoderAI.Context.Values) do
+        local score = scoreEntry(entry)
+
+        if score > 0 then
+            table.insert(results, {
+                Type = "Value",
+                Data = entry,
+                Score = score
+            })
+        end
+    end
+
+    table.sort(results, function(a, b)
+        return a.Score > b.Score
+    end)
+
+    return results
+end
+
 function LuaCoderAI.FormatContext()
     local lines = {}
 
+    table.insert(lines, "GAME_CONTEXT")
+
     table.insert(lines, "SCRIPTS")
 
-    for _, scriptInfo in ipairs(LuaCoderAI.Context.Scripts) do
+    for _, entry in ipairs(LuaCoderAI.Context.Scripts) do
         table.insert(
             lines,
-            tostring(scriptInfo.Path or scriptInfo.Name)
+            tostring(entry.Path or entry.Name)
         )
     end
 
-    table.insert(lines, "")
-    table.insert(lines, "OBJECTS")
+    table.insert(lines, "SYSTEMS")
 
-    for _, objectInfo in ipairs(LuaCoderAI.Context.Objects) do
+    for _, entry in ipairs(LuaCoderAI.Context.Systems) do
         table.insert(
             lines,
-            tostring(objectInfo.Path or objectInfo.Name)
+            tostring(entry.Name)
+        )
+    end
+
+    table.insert(lines, "VALUES")
+
+    for _, entry in ipairs(LuaCoderAI.Context.Values) do
+        table.insert(
+            lines,
+            tostring(entry.Path or entry.Name)
         )
     end
 
     return table.concat(lines, "\n")
 end
 
-local function parseTranslatedRequest(text)
-    local result = {
+local function parseRequest(input)
+    local request = {
         Intent = "unknown",
         Action = "unknown",
         Target = "unknown",
         Property = "unknown",
         Value = nil,
         Subject = "unknown",
-        Confidence = 0,
-        Original = "",
-        Matches = {}
+        OriginalPrompt = tostring(input or "")
     }
 
-    text = tostring(text or "")
+    for line in string.gmatch(
+        tostring(input or ""),
+        "[^\r\n]+"
+    ) do
+        local key, value = string.match(
+            line,
+            "^([A-Z_]+)=(.*)$"
+        )
 
-    for line in string.gmatch(text, "[^\n]+") do
-        local key, value = string.match(line, "^([A-Z_]+)=(.*)$")
-
-        if key then
-            if key == "INTENT" then
-                result.Intent = value
-            elseif key == "ACTION" then
-                result.Action = value
-            elseif key == "TARGET" then
-                result.Target = value
-            elseif key == "PROPERTY" then
-                result.Property = value
-            elseif key == "VALUE" then
-                result.Value = tonumber(value) or value
-            elseif key == "SUBJECT" then
-                result.Subject = value
-            elseif key == "CONFIDENCE" then
-                result.Confidence = tonumber(value) or 0
-            elseif key == "ORIGINAL" then
-                result.Original = value
-            end
+        if key == "INTENT" then
+            request.Intent = value
+        elseif key == "ACTION" then
+            request.Action = value
+        elseif key == "TARGET" then
+            request.Target = value
+        elseif key == "PROPERTY" then
+            request.Property = value
+        elseif key == "VALUE" then
+            request.Value = tonumber(value) or value
+        elseif key == "SUBJECT" then
+            request.Subject = value
+        elseif key == "ORIGINAL" then
+            request.OriginalPrompt = value
         end
     end
 
-    return result
+    return request
 end
 
-local function makeVariable(name)
-    name = tostring(name or "object")
-    name = name:gsub("[^%w_]", "_")
-    name = name:gsub("^%d", "_%0")
+local function makeFindCode(target)
+    return [[
+local results = {}
 
-    if name == "" then
-        name = "object"
+for _, object in ipairs(game:GetDescendants()) do
+    if string.find(
+        string.lower(object.Name),
+        string.lower("]] .. tostring(target) .. [["),
+        1,
+        true
+    ) then
+        table.insert(results, object)
     end
-
-    return name
 end
-
-local function generateCreate(request)
-    if request.Target == "folder" then
-        return [[local folder = Instance.new("Folder")
-folder.Name = "NewFolder"
-folder.Parent = workspace]]
-    end
-
-    if request.Target == "gui" then
-        return [[local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "NewGui"
-screenGui.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")]]
-    end
-
-    return [[local newObject = Instance.new("Folder")
-newObject.Name = "NewObject"
-newObject.Parent = workspace]]
-end
-
-local function generateFind(request)
-    local target = request.Target
-
-    return [[local function findMatchingObjects()
-    local results = {}
-
-    for _, object in ipairs(game:GetDescendants()) do
-        if string.find(
-            string.lower(object.Name),
-            string.lower("]] .. target .. [["),
-            1,
-            true
-        ) then
-            table.insert(results, object)
-        end
-    end
-
-    return results
-end
-
-local results = findMatchingObjects()
 
 for _, object in ipairs(results) do
     print(object:GetFullName())
-end]]
+end
+]]
 end
 
-local function generateModify(request)
-    local property = request.Property
-    local value = request.Value or 0
-
-    if property == "speed" then
-        return [[local character = game:GetService("Players").LocalPlayer.Character
-
-if character then
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-
-    if humanoid then
-        humanoid.WalkSpeed = ]] .. tostring(value) .. [[
-    end
-end]]
-    end
-
-    if property == "health" then
-        return [[local character = game:GetService("Players").LocalPlayer.Character
-
-if character then
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-
-    if humanoid then
-        humanoid.Health = ]] .. tostring(value) .. [[
-    end
-end]]
-    end
-
-    return [[local targetValue = ]] .. tostring(value) .. [[
-print("Modify request prepared:", targetValue)]]
-end
-
-local function generateTest(request)
-    return [[local results = {}
+local function makeSetValueCode(target, value)
+    return [[
+local targetName = "]] .. tostring(target) .. [["
+local newValue = ]] .. tostring(value or 0) .. [[
 
 for _, object in ipairs(game:GetDescendants()) do
-    if object.Name then
-        table.insert(results, object:GetFullName())
+    if string.lower(object.Name) == string.lower(targetName) then
+        if object:IsA("NumberValue")
+            or object:IsA("IntValue") then
+
+            object.Value = newValue
+            print("Changed:", object:GetFullName())
+
+            break
+        end
     end
 end
+]]
+end
 
-print("Test completed")
-print("Objects indexed:", #results)]]
+local function makeCreateCode(target)
+    return [[
+local object = Instance.new("Folder")
+object.Name = "]] .. tostring(target) .. [["
+object.Parent = workspace
+]]
 end
 
 function LuaCoderAI.Generate(input)
-    local request = parseTranslatedRequest(input)
+    local request = parseRequest(input)
 
-    if request.Intent == "create" then
-        return generateCreate(request), request
+    local searchQuery = request.Target
+
+    if searchQuery == "unknown" then
+        searchQuery = request.OriginalPrompt
     end
+
+    local matches = LuaCoderAI.Search(searchQuery)
+
+    local bestMatch = matches[1]
 
     if request.Intent == "find" then
-        return generateFind(request), request
+        return makeFindCode(searchQuery), {
+            Request = request,
+            Matches = matches
+        }
     end
 
-    if request.Intent == "modify"
-        or request.Intent == "set"
-        or request.Intent == "increase"
-        or request.Intent == "decrease" then
+    if request.Intent == "set"
+        or request.Intent == "modify" then
 
-        return generateModify(request), request
+        return makeSetValueCode(
+            searchQuery,
+            request.Value
+        ), {
+            Request = request,
+            Matches = matches,
+            BestMatch = bestMatch
+        }
     end
 
-    if request.Intent == "test" then
-        return generateTest(request), request
+    if request.Intent == "create" then
+        return makeCreateCode(searchQuery), {
+            Request = request,
+            Matches = matches
+        }
     end
 
-    local code = [[print("LuaCoderAI could not select a generation pattern yet")]]
-    return code, request
-end
-
-return LuaCoderAI    text = text:gsub(from, to)
-end
-
-text = text:gsub("[%p]", " ")
-text = text:gsub("%s+", " ")
-text = text:gsub("^%s+", "")
-text = text:gsub("%s+$", "")
-
-return text
-
-end
-
----
-
--- KNOWLEDGE
-
-local Actions = {
-get = {
-"get me", "give me", "show me", "find me",
-"retrieve", "fetch", "display", "search",
-"get", "give", "show", "find", "grab",
-"read", "what is", "what are", "check",
-},
-
-set = {
-    "change", "modify", "update", "adjust",
-    "configure", "replace", "edit", "set",
-},
-
-create = {
-    "create a", "make a", "build a",
-    "generate a", "create", "make",
-    "build", "generate", "spawn", "add",
-},
-
-remove = {
-    "get rid of", "remove", "delete",
-    "destroy", "erase", "clear",
-},
-
-enable = {
-    "turn on", "enable", "activate", "start",
-},
-
-disable = {
-    "turn off", "disable", "deactivate", "stop",
-},
-
-move = {
-    "teleport", "move", "position", "send", "bring",
-},
-
-wait = {
-    "wait", "pause", "delay", "sleep", "hold",
-},
-
-print = {
-    "print", "output", "log", "debug",
-},
-
-check = {
-    "see if", "check", "test", "detect",
-    "verify", "determine",
-},
-
-}
-
-local Targets = {
-player = {
-"localplayer", "local player", "player",
-"players", "user", "person",
-},
-
-character = {
-    "player character", "character", "avatar",
-},
-
-humanoid = {
-    "humanoid",
-},
-
-npc = {
-    "non player character", "npc", "enemy", "bot",
-},
-
-part = {
-    "basepart", "part", "block", "brick",
-},
-
-model = {
-    "model", "group",
-},
-
-folder = {
-    "folder", "directory",
-},
-
-tool = {
-    "tool", "item",
-},
-
-gui = {
-    "screengui", "screen gui", "interface",
-    "menu", "gui", "ui",
-},
-
-button = {
-    "textbutton", "imagebutton", "text button",
-    "image button", "button",
-},
-
-frame = {
-    "frame", "panel",
-},
-
-textlabel = {
-    "textlabel", "text label", "label",
-},
-
-textbox = {
-    "textbox", "text box",
-},
-
-camera = {
-    "current camera", "camera",
-},
-
-sound = {
-    "sound", "audio", "music",
-},
-
-remoteevent = {
-    "remoteevent", "remote event",
-},
-
-remotefunction = {
-    "remotefunction", "remote function",
-},
-
-team = {
-    "teams", "team",
-},
-
-datastore = {
-    "datastore", "data store",
-},
-
-}
-
-local Properties = {
-name = {
-"player name", "name",
-},
-
-displayname = {
-    "display name", "displayname",
-},
-
-userid = {
-    "user id", "userid", "player id",
-},
-
-health = {
-    "hitpoints", "health", "hp",
-},
-
-maxhealth = {
-    "maximum health", "max health", "maxhealth",
-},
-
-walkspeed = {
-    "movement speed", "walk speed",
-    "walkspeed", "move speed", "speed",
-},
-
-jumppower = {
-    "jump power", "jumppower",
-},
-
-jumpheight = {
-    "jump height", "jumpheight",
-},
-
-position = {
-    "coordinates", "location", "position",
-},
-
-cframe = {
-    "rotation", "cframe",
-},
-
-size = {
-    "dimensions", "scale", "size",
-},
-
-color = {
-    "colour", "color",
-},
-
-transparency = {
-    "transparent", "invisible", "transparency",
-},
-
-cancollide = {
-    "can collide", "collision", "cancollide",
-},
-
-anchored = {
-    "anchored", "anchor", "freeze",
-},
-
-visible = {
-    "visibility", "visible", "hide", "show",
-},
-
-enabled = {
-    "enabled", "enable", "disable",
-},
-
-text = {
-    "button text", "label text", "message", "text",
-},
-
-volume = {
-    "sound volume", "audio volume", "volume",
-},
-
-playbackspeed = {
-    "playback speed", "sound speed",
-},
-
-}
-
-local Events = {
-player_added = {
-"when a player joins", "player joins",
-"player joined", "someone joins",
-},
-
-player_removing = {
-    "when a player leaves", "player leaves", "player left",
-},
-
-character_added = {
-    "when character spawns", "character spawns",
-    "character spawned",
-},
-
-touched = {
-    "when the part is touched", "when touched",
-    "part touched", "touch",
-},
-
-clicked = {
-    "when the button is clicked",
-    "button clicked", "when clicked",
-},
-
-input_began = {
-    "when a key is pressed", "key pressed", "input began",
-},
-
-input_ended = {
-    "when a key is released", "key released", "input ended",
-},
-
-died = {
-    "when the player dies", "when character dies",
-    "player died", "humanoid died",
-},
-
-heartbeat = {
-    "every frame", "each frame", "heartbeat",
-},
-
-renderstepped = {
-    "every render frame", "render stepped", "renderstepped",
-},
-
-}
-
----
-
--- MATCHER
-
-local Matcher = {}
-
-function Matcher.Find(text, categories)
-local bestMatch = nil
-local bestLength = 0
-
-for name, phrases in pairs(categories) do
-    for _, phrase in ipairs(phrases) do
-        local phraseLower = string.lower(phrase)
-
-        if string.find(text, phraseLower, 1, true) then
-            if #phrase > bestLength then
-                bestMatch = name
-                bestLength = #phrase
-            end
-        end
-    end
-end
-
-return bestMatch, bestLength
-
-end
-
----
-
--- VALUE PARSER
-
-local ValueParser = {}
-
-function ValueParser.Number(text)
-local number = string.match(
-text,
-"%-?%d+%.?%d*"
-)
-
-if number then
-    return tonumber(number)
-end
-
-return nil
-
-end
-
-function ValueParser.Boolean(text)
-if string.find(text, "turn on", 1, true)
-or string.find(text, "enable", 1, true)
-or string.find(text, "true", 1, true) then
-
-    return true
-end
-
-if string.find(text, "turn off", 1, true)
-    or string.find(text, "disable", 1, true)
-    or string.find(text, "false", 1, true) then
-
-    return false
-end
-
-return nil
-
-end
-
----
-
--- PARSER
-
-local Parser = {}
-
-function Parser.Parse(request)
-local text = Normalizer.Normalize(request)
-
-local action = Matcher.Find(text, Actions)
-local target = Matcher.Find(text, Targets)
-local property = Matcher.Find(text, Properties)
-local event = Matcher.Find(text, Events)
-
-local value = ValueParser.Number(text)
-
-if value == nil then
-    value = ValueParser.Boolean(text)
-end
-
-return {
-    Request = request,
-    Normalized = text,
-
-    Action = action,
-    Target = target,
-    Property = property,
-    Event = event,
-    Value = value,
-}
-
-end
-
----
-
--- TEMPLATE ENGINE
-
-local TemplateEngine = {}
-
-function TemplateEngine.Render(code, variables)
-for name, value in pairs(variables or {}) do
-code = string.gsub(
-code,
-"{{" .. name .. "}}",
-tostring(value)
-)
-end
-
-return code
-
-end
-
----
-
--- CODE TEMPLATES
-
-local Templates = {
-
-Get = {
-
-    health = [[
-
-local Players = game:GetService("Players")
-
-local Player = Players.LocalPlayer
-local Character = Player.Character or Player.CharacterAdded:Wait()
-local Humanoid = Character:WaitForChild("Humanoid")
-
-print(Humanoid.Health)
-]],
-
-    walkspeed = [[
-
-local Players = game:GetService("Players")
-
-local Player = Players.LocalPlayer
-local Character = Player.Character or Player.CharacterAdded:Wait()
-local Humanoid = Character:WaitForChild("Humanoid")
-
-print(Humanoid.WalkSpeed)
-]],
-
-    name = [[
-
-local Player = game:GetService("Players").LocalPlayer
-
-print(Player.Name)
-]],
-
-    userid = [[
-
-local Player = game:GetService("Players").LocalPlayer
-
-print(Player.UserId)
-]],
-
-},
-
-Set = {
-
-    walkspeed = [[
-
-local Players = game:GetService("Players")
-
-local Player = Players.LocalPlayer
-local Character = Player.Character or Player.CharacterAdded:Wait()
-local Humanoid = Character:WaitForChild("Humanoid")
-
-Humanoid.WalkSpeed = {{VALUE}}
-]],
-
-    health = [[
-
-local Players = game:GetService("Players")
-
-local Player = Players.LocalPlayer
-local Character = Player.Character or Player.CharacterAdded:Wait()
-local Humanoid = Character:WaitForChild("Humanoid")
-
-Humanoid.Health = {{VALUE}}
-]],
-
-    jumppower = [[
-
-local Players = game:GetService("Players")
-
-local Player = Players.LocalPlayer
-local Character = Player.Character or Player.CharacterAdded:Wait()
-local Humanoid = Character:WaitForChild("Humanoid")
-
-Humanoid.JumpPower = {{VALUE}}
-]],
-
-    maxhealth = [[
-
-local Players = game:GetService("Players")
-
-local Player = Players.LocalPlayer
-local Character = Player.Character or Player.CharacterAdded:Wait()
-local Humanoid = Character:WaitForChild("Humanoid")
-
-Humanoid.MaxHealth = {{VALUE}}
-]],
-
-},
-
-Create = {
-
-    part = [[
-
-local Part = Instance.new("Part")
-
-Part.Name = "NewPart"
-Part.Size = Vector3.new(4, 1, 4)
-Part.Position = Vector3.new(0, 5, 0)
-
-Part.Parent = workspace
-]],
-
-    folder = [[
-
-local Folder = Instance.new("Folder")
-
-Folder.Name = "NewFolder"
-Folder.Parent = workspace
-]],
-
-    button = [[
-
-local Button = Instance.new("TextButton")
-
-Button.Name = "NewButton"
-Button.Size = UDim2.fromOffset(200, 50)
-Button.Text = "Button"
-
-Button.Parent = script.Parent
-]],
-
-    frame = [[
-
-local Frame = Instance.new("Frame")
-
-Frame.Name = "NewFrame"
-Frame.Size = UDim2.fromOffset(400, 300)
-
-Frame.Parent = script.Parent
-]],
-
-    textlabel = [[
-
-local Label = Instance.new("TextLabel")
-
-Label.Name = "NewLabel"
-Label.Size = UDim2.fromOffset(200, 50)
-Label.Text = "Hello"
-
-Label.Parent = script.Parent
-]],
-
-    remoteevent = [[
-
-local ReplicatedStorage =
-game:GetService("ReplicatedStorage")
-
-local Remote =
-Instance.new("RemoteEvent")
-
-Remote.Name = "NewRemote"
-Remote.Parent = ReplicatedStorage
-]],
-
-    sound = [[
-
-local Sound = Instance.new("Sound")
-
-Sound.Name = "NewSound"
-
-Sound.Parent = workspace
-]],
-
-},
-
-Events = {
-
-    player_added = [[
-
-local Players = game:GetService("Players")
-
-Players.PlayerAdded:Connect(function(Player)
-
-print(Player.Name .. " joined")
-
-end)
-]],
-
-    player_removing = [[
-
-local Players = game:GetService("Players")
-
-Players.PlayerRemoving:Connect(function(Player)
-
-print(Player.Name .. " left")
-
-end)
-]],
-
-    character_added = [[
-
-local Players = game:GetService("Players")
-
-Players.PlayerAdded:Connect(function(Player)
-
-Player.CharacterAdded:Connect(function(Character)
-
-    -- Character spawned
-
-end)
-
-end)
-]],
-
-    touched = [[
-
-local Part = script.Parent
-
-Part.Touched:Connect(function(Hit)
-
-local Character = Hit.Parent
-
-if Character then
-
-    local Humanoid =
-        Character:FindFirstChildOfClass("Humanoid")
-
-    if Humanoid then
-
-        -- Code here
-
-    end
-
-end
-
-end)
-]],
-
-    clicked = [[
-
-local Button = script.Parent
-
-Button.Activated:Connect(function()
-
--- Code here
-
-end)
-]],
-
-    died = [[
-
-local Humanoid = script.Parent
-
-Humanoid.Died:Connect(function()
-
--- Code here
-
-end)
-]],
-
-    heartbeat = [[
-
-local RunService =
-game:GetService("RunService")
-
-RunService.Heartbeat:Connect(function(deltaTime)
-
--- Code here
-
-end)
-]],
-
-    renderstepped = [[
-
-local RunService =
-game:GetService("RunService")
-
-RunService.RenderStepped:Connect(function(deltaTime)
-
--- Client frame code
-
-end)
-]],
-
-}
-
-}
-
----
-
--- GAME CONTEXT
-
-LuaCoderAI.GameContext = {
-Scripts = {},
-Objects = {},
-Services = {},
-APIs = {},
-}
-
-function LuaCoderAI.RegisterScript(data)
-table.insert(
-LuaCoderAI.GameContext.Scripts,
-data
-)
-
-return data
-
-end
-
-function LuaCoderAI.RegisterObject(data)
-if not data or not data.Name then
-return nil
-end
-
-LuaCoderAI.GameContext.Objects[data.Name] = data
-
-return data
-
-end
-
-function LuaCoderAI.RegisterService(data)
-table.insert(
-LuaCoderAI.GameContext.Services,
-data
-)
-
-return data
-
-end
-
-function LuaCoderAI.RegisterAPI(data)
-if not data or not data.Name then
-return nil
-end
-
-LuaCoderAI.GameContext.APIs[data.Name] = data
-
-return data
-
-end
-
-function LuaCoderAI.ClearContext()
-LuaCoderAI.GameContext = {
-Scripts = {},
-Objects = {},
-Services = {},
-APIs = {},
-}
-end
-
----
-
--- FORMAT CONTEXT
-
-function LuaCoderAI.FormatContext()
-local output = {}
-
-table.insert(
-    output,
-    "=== LUA CODER AI GAME CONTEXT ==="
-)
-
-table.insert(output, "")
-table.insert(output, "=== SCRIPTS ===")
-
-for _, info in ipairs(
-    LuaCoderAI.GameContext.Scripts
-) do
-
-    table.insert(
-        output,
-        tostring(info.Path or info.Name or "Unknown")
-    )
-end
-
-table.insert(output, "")
-table.insert(output, "=== OBJECTS ===")
-
-for name, info in pairs(
-    LuaCoderAI.GameContext.Objects
-) do
-
-    table.insert(
-        output,
-        tostring(info.Path or name)
-    )
-end
-
-table.insert(output, "")
-table.insert(output, "=== SERVICES ===")
-
-for _, info in ipairs(
-    LuaCoderAI.GameContext.Services
-) do
-
-    table.insert(
-        output,
-        tostring(info.Name or info.Path or "Unknown")
-    )
-end
-
-table.insert(output, "")
-table.insert(output, "=== APIS ===")
-
-for name, info in pairs(
-    LuaCoderAI.GameContext.APIs
-) do
-
-    table.insert(
-        output,
-        tostring(info.Path or name)
-    )
-end
-
-return table.concat(output, "\n")
-
-end
-
----
-
--- GAME HIERARCHY SCANNER
-
-function LuaCoderAI.GetFullPath(object)
-local success, result = pcall(function()
-return object:GetFullName()
-end)
-
-if success then
-    return result
-end
-
-return object.Name
-
-end
-
-function LuaCoderAI.ScanGame(roots)
-local scripts = {}
-local objects = {}
-
-if not roots then
-    roots = {
-        workspace,
-        game:GetService("ReplicatedStorage"),
-        game:GetService("StarterGui"),
+    return [[
+print("LuaCoderAI needs more information for this request")
+]], {
+        Request = request,
+        Matches = matches
     }
 end
-
-for _, root in ipairs(roots) do
-
-    local success, descendants = pcall(function()
-        return root:GetDescendants()
-    end)
-
-    if success and descendants then
-
-        for _, object in ipairs(descendants) do
-
-            local info = {
-                Name = object.Name,
-                ClassName = object.ClassName,
-                Path = LuaCoderAI.GetFullPath(object),
-            }
-
-            if object:IsA("Script")
-                or object:IsA("LocalScript")
-                or object:IsA("ModuleScript") then
-
-                table.insert(
-                    scripts,
-                    info
-                )
-
-            end
-
-            if object:IsA("RemoteEvent")
-                or object:IsA("RemoteFunction")
-                or object:IsA("ScreenGui")
-                or object:IsA("TextButton")
-                or object:IsA("ImageButton")
-                or object:IsA("Tool")
-                or object:IsA("Model") then
-
-                table.insert(
-                    objects,
-                    info
-                )
-
-            end
-
-        end
-
-    end
-
-end
-
-return scripts, objects
-
-end
-
----
-
--- GENERATOR
-
-function LuaCoderAI.Generate(request)
-local data = Parser.Parse(request)
-local code = nil
-
-if data.Event then
-    code = Templates.Events[data.Event]
-end
-
-if not code and data.Action == "get" then
-    code = Templates.Get[data.Property]
-end
-
-if not code and data.Action == "set" then
-    code = Templates.Set[data.Property]
-end
-
-if not code and data.Action == "create" then
-    code = Templates.Create[data.Target]
-end
-
-if not code then
-
-    code =
-        "-- LuaCoderAI could not find a matching template yet.\n\n"
-        .. "-- Request:\n"
-        .. tostring(request)
-        .. "\n\n"
-        .. "-- Detected Action: "
-        .. tostring(data.Action)
-        .. "\n"
-        .. "-- Detected Target: "
-        .. tostring(data.Target)
-        .. "\n"
-        .. "-- Detected Property: "
-        .. tostring(data.Property)
-        .. "\n"
-        .. "-- Detected Event: "
-        .. tostring(data.Event)
-
-end
-
-code = TemplateEngine.Render(
-    code,
-    {
-        VALUE = data.Value or "VALUE"
-    }
-)
-
-return code, data
-
-end
-
----
-
--- PUBLIC KNOWLEDGE ACCESS
-
-LuaCoderAI.Actions = Actions
-LuaCoderAI.Targets = Targets
-LuaCoderAI.Properties = Properties
-LuaCoderAI.Events = Events
-LuaCoderAI.Templates = Templates
-
-LuaCoderAI.Normalize = Normalizer.Normalize
-LuaCoderAI.Parse = Parser.Parse
-
----
-
--- VERSION
-
-LuaCoderAI.Version = "1.0.0"
 
 return LuaCoderAI
