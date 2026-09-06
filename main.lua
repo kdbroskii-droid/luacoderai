@@ -1,40 +1,319 @@
---[[
-LuaCoderAI - main.lua
-Combined single-file Luau code generation library.
-
-Intended for your own Roblox development projects.
-
-]]
-
 local LuaCoderAI = {}
 
----
-
--- NORMALIZER
-
-local Normalizer = {}
-
-function Normalizer.Normalize(text)
-text = string.lower(text or "")
-
-local replacements = {
-    ["player's"] = "player",
-    ["players"] = "player",
-    ["hit points"] = "health",
-    ["hp"] = "health",
-    ["user id"] = "userid",
-    ["walk speed"] = "walkspeed",
-    ["move speed"] = "walkspeed",
-    ["jump power"] = "jumppower",
-    ["jump height"] = "jumpheight",
-    ["screen gui"] = "gui",
-    ["remote event"] = "remoteevent",
-    ["remote function"] = "remotefunction",
-    ["colour"] = "color",
+LuaCoderAI.Context = {
+    Scripts = {},
+    Objects = {}
 }
 
-for from, to in pairs(replacements) do
-    text = text:gsub(from, to)
+LuaCoderAI.Knowledge = {
+    Services = {
+        "Players",
+        "Workspace",
+        "ReplicatedStorage",
+        "ServerStorage",
+        "ServerScriptService",
+        "StarterGui",
+        "StarterPlayer",
+        "TweenService",
+        "RunService",
+        "UserInputService",
+        "CollectionService",
+        "PathfindingService",
+        "PhysicsService",
+        "HttpService",
+        "DataStoreService",
+        "MarketplaceService",
+        "Lighting",
+        "SoundService"
+    },
+
+    Concepts = {
+        "instances",
+        "events",
+        "attributes",
+        "values",
+        "tables",
+        "functions",
+        "modules",
+        "remote events",
+        "remote functions",
+        "players",
+        "characters",
+        "humanoids",
+        "tools",
+        "gui",
+        "animation",
+        "pathfinding",
+        "raycasting",
+        "projectiles",
+        "inventory",
+        "currency",
+        "rounds",
+        "teams",
+        "npcs",
+        "bots",
+        "debugging",
+        "testing"
+    }
+}
+
+function LuaCoderAI.ClearContext()
+    LuaCoderAI.Context.Scripts = {}
+    LuaCoderAI.Context.Objects = {}
+end
+
+function LuaCoderAI.RegisterScript(data)
+    if type(data) == "table" then
+        table.insert(LuaCoderAI.Context.Scripts, data)
+        return true
+    end
+
+    return false
+end
+
+function LuaCoderAI.RegisterObject(data)
+    if type(data) == "table" then
+        table.insert(LuaCoderAI.Context.Objects, data)
+        return true
+    end
+
+    return false
+end
+
+function LuaCoderAI.ScanGame()
+    local scripts = {}
+    local objects = {}
+
+    local ok, descendants = pcall(function()
+        return game:GetDescendants()
+    end)
+
+    if not ok then
+        return scripts, objects
+    end
+
+    for _, object in ipairs(descendants) do
+        local className = object.ClassName
+
+        if className == "Script"
+            or className == "LocalScript"
+            or className == "ModuleScript" then
+
+            table.insert(scripts, {
+                Name = object.Name,
+                Path = object:GetFullName(),
+                ClassName = className
+            })
+
+        else
+            table.insert(objects, {
+                Name = object.Name,
+                Path = object:GetFullName(),
+                ClassName = className
+            })
+        end
+    end
+
+    return scripts, objects
+end
+
+function LuaCoderAI.FormatContext()
+    local lines = {}
+
+    table.insert(lines, "SCRIPTS")
+
+    for _, scriptInfo in ipairs(LuaCoderAI.Context.Scripts) do
+        table.insert(
+            lines,
+            tostring(scriptInfo.Path or scriptInfo.Name)
+        )
+    end
+
+    table.insert(lines, "")
+    table.insert(lines, "OBJECTS")
+
+    for _, objectInfo in ipairs(LuaCoderAI.Context.Objects) do
+        table.insert(
+            lines,
+            tostring(objectInfo.Path or objectInfo.Name)
+        )
+    end
+
+    return table.concat(lines, "\n")
+end
+
+local function parseTranslatedRequest(text)
+    local result = {
+        Intent = "unknown",
+        Action = "unknown",
+        Target = "unknown",
+        Property = "unknown",
+        Value = nil,
+        Subject = "unknown",
+        Confidence = 0,
+        Original = "",
+        Matches = {}
+    }
+
+    text = tostring(text or "")
+
+    for line in string.gmatch(text, "[^\n]+") do
+        local key, value = string.match(line, "^([A-Z_]+)=(.*)$")
+
+        if key then
+            if key == "INTENT" then
+                result.Intent = value
+            elseif key == "ACTION" then
+                result.Action = value
+            elseif key == "TARGET" then
+                result.Target = value
+            elseif key == "PROPERTY" then
+                result.Property = value
+            elseif key == "VALUE" then
+                result.Value = tonumber(value) or value
+            elseif key == "SUBJECT" then
+                result.Subject = value
+            elseif key == "CONFIDENCE" then
+                result.Confidence = tonumber(value) or 0
+            elseif key == "ORIGINAL" then
+                result.Original = value
+            end
+        end
+    end
+
+    return result
+end
+
+local function makeVariable(name)
+    name = tostring(name or "object")
+    name = name:gsub("[^%w_]", "_")
+    name = name:gsub("^%d", "_%0")
+
+    if name == "" then
+        name = "object"
+    end
+
+    return name
+end
+
+local function generateCreate(request)
+    if request.Target == "folder" then
+        return [[local folder = Instance.new("Folder")
+folder.Name = "NewFolder"
+folder.Parent = workspace]]
+    end
+
+    if request.Target == "gui" then
+        return [[local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "NewGui"
+screenGui.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")]]
+    end
+
+    return [[local newObject = Instance.new("Folder")
+newObject.Name = "NewObject"
+newObject.Parent = workspace]]
+end
+
+local function generateFind(request)
+    local target = request.Target
+
+    return [[local function findMatchingObjects()
+    local results = {}
+
+    for _, object in ipairs(game:GetDescendants()) do
+        if string.find(
+            string.lower(object.Name),
+            string.lower("]] .. target .. [["),
+            1,
+            true
+        ) then
+            table.insert(results, object)
+        end
+    end
+
+    return results
+end
+
+local results = findMatchingObjects()
+
+for _, object in ipairs(results) do
+    print(object:GetFullName())
+end]]
+end
+
+local function generateModify(request)
+    local property = request.Property
+    local value = request.Value or 0
+
+    if property == "speed" then
+        return [[local character = game:GetService("Players").LocalPlayer.Character
+
+if character then
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+
+    if humanoid then
+        humanoid.WalkSpeed = ]] .. tostring(value) .. [[
+    end
+end]]
+    end
+
+    if property == "health" then
+        return [[local character = game:GetService("Players").LocalPlayer.Character
+
+if character then
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+
+    if humanoid then
+        humanoid.Health = ]] .. tostring(value) .. [[
+    end
+end]]
+    end
+
+    return [[local targetValue = ]] .. tostring(value) .. [[
+print("Modify request prepared:", targetValue)]]
+end
+
+local function generateTest(request)
+    return [[local results = {}
+
+for _, object in ipairs(game:GetDescendants()) do
+    if object.Name then
+        table.insert(results, object:GetFullName())
+    end
+end
+
+print("Test completed")
+print("Objects indexed:", #results)]]
+end
+
+function LuaCoderAI.Generate(input)
+    local request = parseTranslatedRequest(input)
+
+    if request.Intent == "create" then
+        return generateCreate(request), request
+    end
+
+    if request.Intent == "find" then
+        return generateFind(request), request
+    end
+
+    if request.Intent == "modify"
+        or request.Intent == "set"
+        or request.Intent == "increase"
+        or request.Intent == "decrease" then
+
+        return generateModify(request), request
+    end
+
+    if request.Intent == "test" then
+        return generateTest(request), request
+    end
+
+    local code = [[print("LuaCoderAI could not select a generation pattern yet")]]
+    return code, request
+end
+
+return LuaCoderAI    text = text:gsub(from, to)
 end
 
 text = text:gsub("[%p]", " ")
