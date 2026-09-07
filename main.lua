@@ -1,123 +1,185 @@
 local LuaCoderAI = {}
 
+LuaCoderAI.Version = 4
 LuaCoderAI.Context = {
     Scripts = {},
     Objects = {},
     Systems = {},
-    Values = {}
+    Remotes = {},
+    Values = {},
+    GUI = {},
+    Folders = {},
+    Models = {},
+    Locations = {},
+    Checkpoints = {}
 }
 
-LuaCoderAI.Knowledge = {
-    Actions = {
-        "create",
-        "find",
-        "set",
-        "change",
-        "increase",
-        "decrease",
-        "add",
-        "remove",
-        "enable",
-        "disable",
-        "test",
-        "move"
-    },
+local function SafeFullName(instance)
+    local success, result = pcall(function()
+        return instance:GetFullName()
+    end)
 
-    RobloxWords = {
-        "player",
-        "character",
-        "humanoid",
-        "workspace",
-        "folder",
-        "model",
-        "part",
-        "value",
-        "attribute",
-        "event",
-        "remote",
-        "script",
-        "module",
-        "gui",
-        "button",
-        "tool",
-        "npc",
-        "bot",
-        "round",
-        "team",
-        "inventory",
-        "currency",
-        "money",
-        "cash",
-        "coins",
-        "health",
-        "speed",
-        "position",
-        "size"
-    }
-}
+    if success then
+        return result
+    end
 
-local function normalize(text)
-    text = string.lower(tostring(text or ""))
-    text = text:gsub("[%p]", " ")
-    text = text:gsub("%s+", " ")
-    return text:match("^%s*(.-)%s*$")
+    return instance.Name
 end
 
-local function splitWords(text)
+local function HasMeaningfulChildren(instance)
+    local success, descendants = pcall(function()
+        return instance:GetDescendants()
+    end)
+
+    if not success then
+        return false
+    end
+
+    for _, child in ipairs(descendants) do
+        if child:IsA("Script")
+            or child:IsA("LocalScript")
+            or child:IsA("ModuleScript")
+            or child:IsA("RemoteEvent")
+            or child:IsA("RemoteFunction")
+            or child:IsA("Folder")
+            or child:IsA("Model")
+            or child:IsA("ValueBase") then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function IsCheckpointName(name)
+    name = string.lower(tostring(name or ""))
+
+    local keywords = {
+        "checkpoint",
+        "spawn",
+        "waypoint",
+        "route",
+        "zone",
+        "area",
+        "portal",
+        "teleport",
+        "base",
+        "farm",
+        "rare"
+    }
+
+    for _, keyword in ipairs(keywords) do
+        if string.find(name, keyword, 1, true) then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function GetCategory(instance)
+    if instance:IsA("RemoteEvent")
+        or instance:IsA("RemoteFunction") then
+        return "REMOTES"
+    end
+
+    if instance:IsA("ValueBase") then
+        return "VALUES"
+    end
+
+    if instance:IsA("Script")
+        or instance:IsA("LocalScript")
+        or instance:IsA("ModuleScript") then
+        return "SCRIPTS"
+    end
+
+    if instance:IsA("ScreenGui")
+        or instance:IsA("SurfaceGui")
+        or instance:IsA("BillboardGui")
+        or instance:IsA("GuiObject") then
+        return "GUI"
+    end
+
+    if instance:IsA("Folder") then
+        return "FOLDERS"
+    end
+
+    if instance:IsA("Model") then
+        return "MODELS"
+    end
+
+    if instance:IsA("BasePart") then
+        if IsCheckpointName(instance.Name)
+            or HasMeaningfulChildren(instance) then
+            return "CHECKPOINTS"
+        end
+
+        return "PARTS"
+    end
+
+    return "OBJECTS"
+end
+
+local function GetAttributes(instance)
     local result = {}
 
-    for word in string.gmatch(normalize(text), "%S+") do
-        table.insert(result, word)
+    local success, attributes = pcall(function()
+        return instance:GetAttributes()
+    end)
+
+    if success then
+        for name, value in pairs(attributes) do
+            result[name] = tostring(value)
+        end
     end
 
     return result
 end
 
-local function similarity(a, b)
-    a = normalize(a)
-    b = normalize(b)
+local function CreateObjectInfo(instance, category)
+    local parentName = ""
 
-    if a == b then
-        return 100
-    end
+    pcall(function()
+        if instance.Parent then
+            parentName = instance.Parent.Name
+        end
+    end)
 
-    if a == "" or b == "" then
-        return 0
-    end
+    local info = {
+        Name = instance.Name,
+        Path = SafeFullName(instance),
+        ClassName = instance.ClassName,
+        Category = category,
+        ParentName = parentName,
+        Attributes = GetAttributes(instance)
+    }
 
-    if string.find(a, b, 1, true) then
-        return 90
-    end
+    if instance:IsA("ValueBase") then
+        local success, value = pcall(function()
+            return instance.Value
+        end)
 
-    if string.find(b, a, 1, true) then
-        return 90
-    end
-
-    local common = 0
-    local used = {}
-
-    for i = 1, #a do
-        local char = a:sub(i, i)
-
-        for j = 1, #b do
-            if not used[j] and char == b:sub(j, j) then
-                common = common + 1
-                used[j] = true
-                break
-            end
+        if success then
+            info.Value = tostring(value)
         end
     end
 
-    return math.floor(
-        (common / math.max(#a, #b)) * 100
-    )
+    return info
 end
 
 function LuaCoderAI.ClearContext()
-    LuaCoderAI.Context.Scripts = {}
-    LuaCoderAI.Context.Objects = {}
-    LuaCoderAI.Context.Systems = {}
-    LuaCoderAI.Context.Values = {}
+    LuaCoderAI.Context = {
+        Scripts = {},
+        Objects = {},
+        Systems = {},
+        Remotes = {},
+        Values = {},
+        GUI = {},
+        Folders = {},
+        Models = {},
+        Locations = {},
+        Checkpoints = {}
+    }
 end
 
 function LuaCoderAI.RegisterScript(data)
@@ -125,15 +187,10 @@ function LuaCoderAI.RegisterScript(data)
         return false
     end
 
-    table.insert(LuaCoderAI.Context.Scripts, {
-        Name = tostring(data.Name or ""),
-        Path = tostring(data.Path or ""),
-        ClassName = tostring(data.ClassName or ""),
-        Tags = data.Tags or {},
-        Keywords = data.Keywords or {},
-        Description = data.Description or "",
-        API = data.API or {}
-    })
+    table.insert(
+        LuaCoderAI.Context.Scripts,
+        data
+    )
 
     return true
 end
@@ -143,328 +200,513 @@ function LuaCoderAI.RegisterObject(data)
         return false
     end
 
-    table.insert(LuaCoderAI.Context.Objects, {
-        Name = tostring(data.Name or ""),
-        Path = tostring(data.Path or ""),
-        ClassName = tostring(data.ClassName or ""),
-        Tags = data.Tags or {}
-    })
+    table.insert(
+        LuaCoderAI.Context.Objects,
+        data
+    )
 
     return true
 end
 
-function LuaCoderAI.RegisterSystem(data)
-    if type(data) ~= "table" then
-        return false
-    end
+function LuaCoderAI.ScanDataModel()
+    LuaCoderAI.ClearContext()
 
-    table.insert(LuaCoderAI.Context.Systems, {
-        Name = tostring(data.Name or ""),
-        Path = tostring(data.Path or ""),
-        Keywords = data.Keywords or {},
-        Description = tostring(data.Description or ""),
-        Values = data.Values or {},
-        Actions = data.Actions or {}
-    })
+    local scriptList = {}
+    local objectList = {}
+    local indexed = {}
 
-    return true
-end
-
-function LuaCoderAI.RegisterValue(data)
-    if type(data) ~= "table" then
-        return false
-    end
-
-    table.insert(LuaCoderAI.Context.Values, {
-        Name = tostring(data.Name or ""),
-        Path = tostring(data.Path or ""),
-        Type = tostring(data.Type or ""),
-        Keywords = data.Keywords or {}
-    })
-
-    return true
-end
-
-function LuaCoderAI.ScanGame()
-    local scripts = {}
-    local objects = {}
-
-    local ok, descendants = pcall(function()
+    local success, descendants = pcall(function()
         return game:GetDescendants()
     end)
 
-    if not ok then
-        return scripts, objects
+    if not success then
+        return scriptList, objectList, indexed
     end
 
-    for _, object in ipairs(descendants) do
-        local className = object.ClassName
+    for _, instance in ipairs(descendants) do
+        local category = GetCategory(instance)
 
-        if className == "Script"
-            or className == "LocalScript"
-            or className == "ModuleScript" then
+        if category ~= "PARTS" then
+            local info = CreateObjectInfo(
+                instance,
+                category
+            )
 
-            table.insert(scripts, {
-                Name = object.Name,
-                Path = object:GetFullName(),
-                ClassName = className,
-                Tags = {}
-            })
-        else
-            table.insert(objects, {
-                Name = object.Name,
-                Path = object:GetFullName(),
-                ClassName = className,
-                Tags = {}
-            })
+            table.insert(indexed, info)
+
+            if category == "SCRIPTS" then
+                table.insert(scriptList, info)
+                table.insert(
+                    LuaCoderAI.Context.Scripts,
+                    info
+                )
+
+            elseif category == "REMOTES" then
+                table.insert(
+                    LuaCoderAI.Context.Remotes,
+                    info
+                )
+
+            elseif category == "VALUES" then
+                table.insert(
+                    LuaCoderAI.Context.Values,
+                    info
+                )
+
+            elseif category == "GUI" then
+                table.insert(
+                    LuaCoderAI.Context.GUI,
+                    info
+                )
+
+            elseif category == "FOLDERS" then
+                table.insert(
+                    LuaCoderAI.Context.Folders,
+                    info
+                )
+
+            elseif category == "MODELS" then
+                table.insert(
+                    LuaCoderAI.Context.Models,
+                    info
+                )
+
+                table.insert(
+                    LuaCoderAI.Context.Systems,
+                    info
+                )
+
+            elseif category == "CHECKPOINTS" then
+                table.insert(
+                    LuaCoderAI.Context.Checkpoints,
+                    info
+                )
+
+            else
+                table.insert(
+                    LuaCoderAI.Context.Objects,
+                    info
+                )
+            end
+
+            table.insert(
+                objectList,
+                info
+            )
         end
     end
+
+    return scriptList, objectList, indexed
+end
+
+function LuaCoderAI.ScanGame()
+    local scripts, objects = LuaCoderAI.ScanDataModel()
 
     return scripts, objects
 end
 
-function LuaCoderAI.Search(query)
+local function Normalize(text)
+    text = string.lower(
+        tostring(text or "")
+    )
+
+    text = text:gsub(
+        "[%p_]",
+        " "
+    )
+
+    text = text:gsub(
+        "%s+",
+        " "
+    )
+
+    return text
+end
+
+local function GetWords(text)
+    local words = {}
+
+    for word in Normalize(text):gmatch("%S+") do
+        if #word >= 2 then
+            table.insert(
+                words,
+                word
+            )
+        end
+    end
+
+    return words
+end
+
+local function ScoreMatch(query, info)
+    local queryWords = GetWords(query)
+
+    local searchable = Normalize(
+        tostring(info.Name or "")
+        .. " "
+        .. tostring(info.Path or "")
+        .. " "
+        .. tostring(info.ClassName or "")
+        .. " "
+        .. tostring(info.ParentName or "")
+        .. " "
+        .. tostring(info.Category or "")
+    )
+
+    local score = 0
+
+    for _, word in ipairs(queryWords) do
+        if string.find(
+            searchable,
+            word,
+            1,
+            true
+        ) then
+            score = score + 20
+        end
+    end
+
+    local normalizedName = Normalize(
+        info.Name
+    )
+
+    local normalizedQuery = Normalize(
+        query
+    )
+
+    if normalizedName ~= ""
+        and string.find(
+            normalizedQuery,
+            normalizedName,
+            1,
+            true
+        ) then
+        score = score + 50
+    end
+
+    return score
+end
+
+function LuaCoderAI.SearchContext(query, options)
+    options = options or {}
+
     local results = {}
-    local words = splitWords(query)
+    local searchCheckpoints = options.Checkpoints == true
 
-    local function scoreEntry(entry)
-        local score = 0
-
-        local searchable = {
-            entry.Name,
-            entry.Path,
-            entry.Description
-        }
-
-        for _, tag in ipairs(entry.Tags or {}) do
-            table.insert(searchable, tag)
-        end
-
-        for _, keyword in ipairs(entry.Keywords or {}) do
-            table.insert(searchable, keyword)
-        end
-
-        for _, word in ipairs(words) do
-            for _, text in ipairs(searchable) do
-                score = score + similarity(word, text)
-            end
-        end
-
-        return score
-    end
-
-    for _, entry in ipairs(LuaCoderAI.Context.Scripts) do
-        local score = scoreEntry(entry)
-
-        if score > 0 then
-            table.insert(results, {
-                Type = "Script",
-                Data = entry,
-                Score = score
-            })
-        end
-    end
-
-    for _, entry in ipairs(LuaCoderAI.Context.Systems) do
-        local score = scoreEntry(entry)
-
-        if score > 0 then
-            table.insert(results, {
-                Type = "System",
-                Data = entry,
-                Score = score
-            })
-        end
-    end
-
-    for _, entry in ipairs(LuaCoderAI.Context.Values) do
-        local score = scoreEntry(entry)
-
-        if score > 0 then
-            table.insert(results, {
-                Type = "Value",
-                Data = entry,
-                Score = score
-            })
-        end
-    end
-
-    table.sort(results, function(a, b)
-        return a.Score > b.Score
-    end)
-
-    return results
-end
-
-function LuaCoderAI.FormatContext()
-    local lines = {}
-
-    table.insert(lines, "GAME_CONTEXT")
-
-    table.insert(lines, "SCRIPTS")
-
-    for _, entry in ipairs(LuaCoderAI.Context.Scripts) do
-        table.insert(
-            lines,
-            tostring(entry.Path or entry.Name)
-        )
-    end
-
-    table.insert(lines, "SYSTEMS")
-
-    for _, entry in ipairs(LuaCoderAI.Context.Systems) do
-        table.insert(
-            lines,
-            tostring(entry.Name)
-        )
-    end
-
-    table.insert(lines, "VALUES")
-
-    for _, entry in ipairs(LuaCoderAI.Context.Values) do
-        table.insert(
-            lines,
-            tostring(entry.Path or entry.Name)
-        )
-    end
-
-    return table.concat(lines, "\n")
-end
-
-local function parseRequest(input)
-    local request = {
-        Intent = "unknown",
-        Action = "unknown",
-        Target = "unknown",
-        Property = "unknown",
-        Value = nil,
-        Subject = "unknown",
-        OriginalPrompt = tostring(input or "")
+    local categories = {
+        LuaCoderAI.Context.Scripts,
+        LuaCoderAI.Context.Remotes,
+        LuaCoderAI.Context.Values,
+        LuaCoderAI.Context.Systems,
+        LuaCoderAI.Context.Folders,
+        LuaCoderAI.Context.Models,
+        LuaCoderAI.Context.GUI,
+        LuaCoderAI.Context.Objects
     }
 
-    for line in string.gmatch(
-        tostring(input or ""),
-        "[^\r\n]+"
-    ) do
-        local key, value = string.match(
-            line,
-            "^([A-Z_]+)=(.*)$"
+    if searchCheckpoints then
+        table.insert(
+            categories,
+            LuaCoderAI.Context.Checkpoints
+        )
+    end
+
+    for _, category in ipairs(categories) do
+        for _, info in ipairs(category) do
+            local score = ScoreMatch(
+                query,
+                info
+            )
+
+            if score > 0 then
+                table.insert(
+                    results,
+                    {
+                        Score = score,
+                        Object = info
+                    }
+                )
+            end
+        end
+    end
+
+    table.sort(
+        results,
+        function(a, b)
+            return a.Score > b.Score
+        end
+    )
+
+    local limited = {}
+
+    for index, result in ipairs(results) do
+        if index <= (options.Limit or 25) then
+            table.insert(
+                limited,
+                result
+            )
+        end
+    end
+
+    return limited
+end
+
+function LuaCoderAI.FormatContext(options)
+    options = options or {}
+
+    local lines = {}
+
+    table.insert(
+        lines,
+        "GAME_CONTEXT"
+    )
+
+    local function AddCategory(
+        name,
+        list,
+        limit
+    )
+        table.insert(
+            lines,
+            name .. "=" .. tostring(#list)
         )
 
-        if key == "INTENT" then
-            request.Intent = value
-        elseif key == "ACTION" then
-            request.Action = value
-        elseif key == "TARGET" then
-            request.Target = value
-        elseif key == "PROPERTY" then
-            request.Property = value
-        elseif key == "VALUE" then
-            request.Value = tonumber(value) or value
-        elseif key == "SUBJECT" then
-            request.Subject = value
-        elseif key == "ORIGINAL" then
-            request.OriginalPrompt = value
+        local count = 0
+
+        for _, info in ipairs(list) do
+            count = count + 1
+
+            if count > limit then
+                break
+            end
+
+            table.insert(
+                lines,
+                name
+                    .. "_ITEM="
+                    .. tostring(info.Path)
+                    .. "|"
+                    .. tostring(info.ClassName)
+            )
         end
     end
 
-    return request
+    AddCategory(
+        "SCRIPTS",
+        LuaCoderAI.Context.Scripts,
+        options.ScriptLimit or 50
+    )
+
+    AddCategory(
+        "REMOTES",
+        LuaCoderAI.Context.Remotes,
+        options.RemoteLimit or 50
+    )
+
+    AddCategory(
+        "VALUES",
+        LuaCoderAI.Context.Values,
+        options.ValueLimit or 50
+    )
+
+    AddCategory(
+        "SYSTEMS",
+        LuaCoderAI.Context.Systems,
+        options.SystemLimit or 50
+    )
+
+    AddCategory(
+        "FOLDERS",
+        LuaCoderAI.Context.Folders,
+        options.FolderLimit or 50
+    )
+
+    AddCategory(
+        "GUI",
+        LuaCoderAI.Context.GUI,
+        options.GUILimit or 50
+    )
+
+    if options.IncludeCheckpoints then
+        AddCategory(
+            "CHECKPOINTS",
+            LuaCoderAI.Context.Checkpoints,
+            options.CheckpointLimit or 50
+        )
+    end
+
+    return table.concat(
+        lines,
+        "\n"
+    )
 end
 
-local function makeFindCode(target)
-    return [[
-local results = {}
+local function ExtractContextMatches(request)
+    local includeCheckpoints = false
 
-for _, object in ipairs(game:GetDescendants()) do
+    local normalized = Normalize(request)
+
     if string.find(
-        string.lower(object.Name),
-        string.lower("]] .. tostring(target) .. [["),
+        normalized,
+        "autofarm",
         1,
         true
-    ) then
-        table.insert(results, object)
-    end
-end
-
-for _, object in ipairs(results) do
-    print(object:GetFullName())
-end
-]]
-end
-
-local function makeSetValueCode(target, value)
-    return [[
-local targetName = "]] .. tostring(target) .. [["
-local newValue = ]] .. tostring(value or 0) .. [[
-
-for _, object in ipairs(game:GetDescendants()) do
-    if string.lower(object.Name) == string.lower(targetName) then
-        if object:IsA("NumberValue")
-            or object:IsA("IntValue") then
-
-            object.Value = newValue
-            print("Changed:", object:GetFullName())
-
-            break
-        end
-    end
-end
-]]
-end
-
-local function makeCreateCode(target)
-    return [[
-local object = Instance.new("Folder")
-object.Name = "]] .. tostring(target) .. [["
-object.Parent = workspace
-]]
-end
-
-function LuaCoderAI.Generate(input)
-    local request = parseRequest(input)
-
-    local searchQuery = request.Target
-
-    if searchQuery == "unknown" then
-        searchQuery = request.OriginalPrompt
+    )
+        or string.find(
+            normalized,
+            "auto farm",
+            1,
+            true
+        )
+        or string.find(
+            normalized,
+            "goto",
+            1,
+            true
+        )
+        or string.find(
+            normalized,
+            "zone",
+            1,
+            true
+        ) then
+        includeCheckpoints = true
     end
 
-    local matches = LuaCoderAI.Search(searchQuery)
-
-    local bestMatch = matches[1]
-
-    if request.Intent == "find" then
-        return makeFindCode(searchQuery), {
-            Request = request,
-            Matches = matches
+    return LuaCoderAI.SearchContext(
+        request,
+        {
+            Checkpoints = includeCheckpoints,
+            Limit = 20
         }
+    )
+end
+
+function LuaCoderAI.Generate(request)
+    request = tostring(
+        request or ""
+    )
+
+    local matches = ExtractContextMatches(
+        request
+    )
+
+    local contextLines = {}
+
+    table.insert(
+        contextLines,
+        "REQUEST="
+            .. request
+    )
+
+    table.insert(
+        contextLines,
+        "MATCH_COUNT="
+            .. tostring(#matches)
+    )
+
+    for _, match in ipairs(matches) do
+        local info = match.Object
+
+        table.insert(
+            contextLines,
+            "MATCH="
+                .. tostring(match.Score)
+                .. "|"
+                .. tostring(info.Category)
+                .. "|"
+                .. tostring(info.Path)
+        )
     end
 
-    if request.Intent == "set"
-        or request.Intent == "modify" then
+    local generated = {}
 
-        return makeSetValueCode(
-            searchQuery,
-            request.Value
-        ), {
-            Request = request,
-            Matches = matches,
-            BestMatch = bestMatch
-        }
+    table.insert(
+        generated,
+        "local Request = {}"
+    )
+
+    table.insert(
+        generated,
+        "Request.Prompt = "
+            .. string.format(
+                "%q",
+                request
+            )
+    )
+
+    table.insert(
+        generated,
+        "Request.Matches = {}"
+    )
+
+    for _, match in ipairs(matches) do
+        local info = match.Object
+
+        table.insert(
+            generated,
+            "table.insert(Request.Matches, "
+                .. "{"
+                .. "Name="
+                .. string.format(
+                    "%q",
+                    tostring(info.Name)
+                )
+                .. ", "
+                .. "Path="
+                .. string.format(
+                    "%q",
+                    tostring(info.Path)
+                )
+                .. ", "
+                .. "Category="
+                .. string.format(
+                    "%q",
+                    tostring(info.Category)
+                )
+                .. "}"
+                .. ")"
+        )
     end
 
-    if request.Intent == "create" then
-        return makeCreateCode(searchQuery), {
-            Request = request,
-            Matches = matches
-        }
-    end
+    table.insert(
+        generated,
+        ""
+    )
 
-    return [[
-print("LuaCoderAI needs more information for this request")
-]], {
+    table.insert(
+        generated,
+        "return Request"
+    )
+
+    local code = table.concat(
+        generated,
+        "\n"
+    )
+
+    local data = {
         Request = request,
-        Matches = matches
+        Matches = matches,
+        Context = table.concat(
+            contextLines,
+            "\n"
+        )
+    }
+
+    return code, data
+end
+
+function LuaCoderAI.GetGameAPI()
+    return {
+        Scripts = LuaCoderAI.Context.Scripts,
+        Objects = LuaCoderAI.Context.Objects,
+        Systems = LuaCoderAI.Context.Systems,
+        Remotes = LuaCoderAI.Context.Remotes,
+        Values = LuaCoderAI.Context.Values,
+        GUI = LuaCoderAI.Context.GUI,
+        Folders = LuaCoderAI.Context.Folders,
+        Models = LuaCoderAI.Context.Models,
+        Checkpoints = LuaCoderAI.Context.Checkpoints
     }
 end
 
